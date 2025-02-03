@@ -1,0 +1,317 @@
+---
+title: "MigrationDataCleaning"
+format: html
+editor: visual
+---
+
+```{r}
+wd = "/Users/Hayden/CS526/" #Customize as needed
+datapath = paste0(wd, "Data/")
+graphicspath = paste0(wd, "Maps/")
+library(tidyverse)
+library(readr)
+library(stringr)
+library(geosphere)
+library(ggplot2)
+
+library(usmap)
+```
+
+#I use sf to find the centroids but this is for measuring (effective) distances between counties for the gravity model
+
+```{r}
+clean_pop_centroids <- function(centroid_data) {
+  colnames(centroid_data) = c("st_FIPS", "co_FIPS", "county", "state", "population", "lat", "long")
+centroid_data <- centroid_data |>
+  mutate(long = str_remove(long, "\\\\"),
+         long = as.numeric(long),
+         FIPS = paste0(st_FIPS, co_FIPS)) |>
+  select(-population)
+return(centroid_data)
+}
+
+  #2020 US Census county population centroids found here: https://www.census.gov/geographies/reference-files/time-series/geo/centers-population.html
+pop_centroids = clean_pop_centroids(read_csv(paste0(datapath,"county_pop_centroids_2020.txt")))
+
+#Because CT now uses Planning Regions instead of counties, I use geographic centroids from https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.2024.html#list-tab-264479560 instead of population centroids (which were based on historical counties)
+CT = read.table(paste0(wd,"2024_Gaz_counties_national.txt"), sep = '\t', header = TRUE) |>
+  filter(USPS == "CT") |>
+  select(USPS, GEOID, NAME, INTPTLAT, INTPTLONG) |>
+  mutate(FIPS = sprintf("%05d", as.integer(GEOID)), #Make sure FIPS code is 5 digits
+      st_FIPS = substr(FIPS, 1, 2),
+    co_FIPS = substr(FIPS, 3, 5)) |>
+  select(-GEOID) |>
+  rename(state = USPS,
+         county = NAME,
+         lat = INTPTLAT,
+         long = INTPTLONG)
+
+pop_centroids = rbind(pop_centroids, CT) #add 9 CT planning regions
+
+#Add disused Census divisions from 2010 census (Some in Alaska, Virginia, Shannon, SD)
+#Shannon County, SD was renamed in 2015 and some areas in Virginia and Alaska don't appear in the 2020 centroids, so I add them in using the centroids from 2010
+pop_centroids_2010 = clean_pop_centroids(read_csv(paste0(datapath,"county_pop_centroids_2010.txt"))) |>
+  filter(state %in% c("Alaska", "Virginia") | county == "Shannon")
+
+#centroids are virtually identical over time, so I just use the same ones no matter the year
+pop_centroids = rbind(pop_centroids, pop_centroids_2010) |>
+  group_by(st_FIPS, co_FIPS) |>
+  slice_head(n=1) |>
+  ungroup()
+
+add_centroids <-function(data, pop_centroids){
+  data <- data %>%
+  left_join(pop_centroids %>%
+              select(lat, long, FIPS) %>%
+              rename(sender_lat = lat, sender_long = long,
+                     sender_FIPS = FIPS),
+            by = "sender_FIPS")
+data <- data %>%
+  left_join(pop_centroids %>%
+              select(lat, long, FIPS) %>%
+              rename(receiver_lat = lat, receiver_long = long,
+                receiver_FIPS = FIPS), 
+            by = "receiver_FIPS")
+
+data <- data %>%
+  mutate(dist = pmap_dbl(
+    list(receiver_long, receiver_lat, sender_long, sender_lat),
+    ~ distHaversine(c(..1, ..2), c(..3, ..4)) / 1609.34 #meters to miles
+  ))
+return(data)
+}
+```
+
+#IRS Data Cleaning
+
+```{r}
+#data from: https://www.irs.gov/statistics/soi-tax-stats-migration-data
+#only using inflow data because inflow data because I don't care about outflow from US, but may be interested in inflow to US. Besides foreign migration (much of it military-related?), the data are identical
+#1990-2010 pre-cleaned data found here: https://osf.io/wgcf3/?view_only=c5ba62fb4821421ea0621bfd0d723e61
+
+#data is named as year1year2.
+clean_IRS <- function(IRS_data, year2) {
+  #y1 is sender, y2 is receiver
+  
+IRS_data <- IRS_data |>
+  rename(households = n1,
+         people = n2,
+         sender_county = y1_countyname,
+         sender_state = y1_state) |>
+  mutate(sender_st_FIPS = sprintf("%02s", y1_statefips), #20-21 and 21-22 have FIPS codes as numbers, the rest have them as characters
+         sender_co_FIPS = sprintf("%03s", y1_countyfips),
+         receiver_st_FIPS = sprintf("%02s", y2_statefips),
+         receiver_co_FIPS = sprintf("%03s", y2_countyfips),
+         sender_FIPS = paste0(sender_st_FIPS, sender_co_FIPS),
+         receiver_FIPS = paste0(receiver_st_FIPS, receiver_co_FIPS),
+         households = if_else(households == -1, NA, households),
+         people = if_else(people == -1, NA, people),
+         agi = if_else(agi == -1, NA, agi)) |>
+  select(-y1_countyfips, -y2_countyfips, -y1_statefips, -y2_statefips)
+
+    nonmigrants = IRS_data |>
+      filter(sender_FIPS == receiver_FIPS) |>
+      rename(receiver_county = sender_county,
+             receiver_state = sender_state) |> #to add name of receiver county and state to dataset
+      mutate(receiver_county = str_remove(receiver_county, " Non-migrants"))
+
+    IRS_data <- IRS_data |>
+      filter(!(str_detect(sender_county, "Other flows")),
+             receiver_co_FIPS != "000") #remove state summary rows
+             # !(str_detect(sender_county, "Total")),
+             # !str_detect(sender_county, "Non-migrants")
+
+      
+      # mutate(sender_county = str_remove(sender_county, " Total"),
+      #        sender_county = str_remove(sender_county, " Non-migrants"))
+    
+    #add in columns with non-migrant populations and adds county name for receivers
+    IRS_data = IRS_data |>
+      left_join(nonmigrants %>%
+              select(receiver_FIPS, people, receiver_state, receiver_county) %>%
+              rename(receiver_people = people))
+              
+    IRS_data = IRS_data |>
+      left_join(nonmigrants %>%
+              select(sender_FIPS, people) %>%
+              rename(sender_people = people))
+
+  IRS_data <- IRS_data |>
+    mutate(
+      # sender_county = if_else(str_detect(sender_county, "Do.a Ana County"), "Doña Ana County", sender_county),
+      #      receiver_county = if_else(str_detect(receiver_county, "Do.a Ana County"), "Doña Ana County", receiver_county),
+      year = year2)
+  #Fixes name of Doña Ana County, NM
+  
+  return(IRS_data)
+}
+```
+
+#ACS data cleaning
+
+```{r}
+library(readxl)
+# Function to read a sheet and tidy the data
+read_and_tidy <- function(sheet_name) {
+  data <- read_excel(file_path, sheet = sheet_name, skip = 1)
+  data = data[-1,]
+  
+  # Create sender_FIPS and receiver_FIPS (combine State and County FIPS codes)
+  data <- data %>%
+    mutate(
+      receiver_FIPS = paste0(`State Code of Geography A`, `FIPS County Code of Geography A`),
+      sender_FIPS = paste0(`State/U.S. Island Area/Foreign Region Code of Geography B`, `FIPS County Code of Geography B`),
+      receiver_FIPS = str_remove(receiver_FIPS, "NA$"),
+      sender_FIPS = str_remove(sender_FIPS, "NA$"),
+      receiver_FIPS = str_remove(receiver_FIPS, "^0"), #state FIPS is formatted as 3 digits, this removes extra leading 0
+      sender_FIPS = str_remove(sender_FIPS, "^0"),
+      receiver_state = `State Name of Geography A`,
+      sender_state = `State/U.S. Island Area/Foreign Region of Geography B`
+    ) %>%
+    select(
+      sender_FIPS, receiver_FIPS, sender_state, receiver_state,
+      flow = `Flow from Geography B to Geography A`,
+      counterflow = `Counterflow from Geography A to Geography B1`
+    )
+  
+  return(data)
+}
+
+state_names = read.csv(paste0(wd, "state_names.csv"))
+
+#repeat script for the two 5-year datasets, then rbind together
+file_path <- paste0(datapath, "county-to-county-2011-2015-ins-outs-nets-gross.xlsx")
+acs_data_1 <- state_names$name %>%
+  lapply(read_and_tidy) %>%
+  bind_rows()
+file_path <- paste0(datapath, "county-to-county-2016-2020-ins-outs-nets-gross.xlsx")
+acs_data_2 <- state_names$name %>%
+  lapply(read_and_tidy) %>%
+  bind_rows()
+acs_data_merged = rbind(acs_data_1, acs_data_2)
+acs_data_merged <- acs_data_merged |>
+  group_by(sender_FIPS, receiver_FIPS, sender_state, receiver_state) |>
+  summarize(flow = sum(as.numeric(flow))*5, #source provides yearly flows, convert to total over 10-year period
+            counterflow = sum(as.numeric(counterflow))*5) |>
+  ungroup() |>
+  filter(sender_FIPS != receiver_FIPS,
+         !is.na(sender_state)) #filter out a few footnote-like rows that slipped through the cracks
+
+acs_data_merged = add_centroids(acs_data_merged, pop_centroids)
+```
+
+```{r}
+# Save tidy dataframe to a CSV (check if it looks good first)
+#write.csv(acs_data_merged, paste0(datapath, "acs_migration_data_2011-2020.csv"), row.names = FALSE)
+```
+
+#Reads in 2012-2022 IRS migration data
+
+```{r}
+irs_data = NULL
+for(y2 in (12:22)) {
+  y1 = y2 -1
+  y1y2 = paste0(sprintf("%02d", y1), sprintf("%02d", y2))
+  clean = clean_IRS(read_csv(paste0(datapath,"countyinflow", y1y2, ".csv")), 2000 + y2)
+  irs_data = rbind(irs_data, clean)
+}
+# data1011 = read.csv("countyinflow1011.csv")
+# colnames(data1011) = colnames(read.csv("countyinflow1112.csv")) #10-11 and earlier have different column names
+#county_migration_data.csv has data on 1990-2010, but I am focusing on more recent data
+
+irs_data <- irs_data |>
+  distinct() |> #for some reason there are duplicate rows
+  filter(!(sender_county == "Washington County" & sender_state == "KS" & households > 1000),
+         !(receiver_state == "KS" & receiver_people < 600)) #there seems to be an issue with 2012 where a few Kansas counties received most of their population in migrants from Washington County, KS. Solution: drop three observations from 2012 where Washington County, KS sent over 1000 households (its population is ~5000) and one with no recipient (??)
+
+irs_data = add_centroids(irs_data, pop_centroids)
+```
+
+```{r}
+#save IRS data so you don't have to do this all the time
+#write.csv(irs_data, paste0(datapath, "irs_migration_data_2012-2022.csv"), row.names = FALSE)
+```
+#That concludes the data cleaning section
+
+#Read in the clean data
+```{r suppress = TRUE}
+irs_data = read_csv(paste0(datapath,"irs_migration_data_2012-2022.csv"))
+acs_data = read_csv(paste0(datapath,"acs_migration_data_2011-2020.csv"))
+#data = irs_data
+#data = acs_data
+#set "data" to the one you want to work with
+```
+
+#This code is written for the IRS data. Will update later for ACS data.
+```{r}
+#This data could help us analyze differences in income between migrants and non-migrants
+#Keep in mind that the IRS only has data on households who file taxes in two consecutive years, so I believe that foreign immigrants are generally not included because the year they immigrate they almost certainly didn't file US taxes the previous year.
+#I need to double check/do more research, but I believe that the "Foreign" category is primarily military families returning from foreign deployment and expats returning
+migration_income <- irs_data %>%
+  filter(str_detect(sender_county, "igra")) |> #gets all the summary rows for each county
+  # Add a key column for migration group (e.g., US, Foreign, etc.)
+  mutate(migration_group = case_when(sender_FIPS == "96000" ~ "Total_migration",
+                                     sender_FIPS == "97000" ~ "US_migration",
+                                     sender_FIPS == "97001" ~ "Instate",
+                                     sender_FIPS == "97003" ~ "Diffstate",
+                                     sender_FIPS == "98000" ~ "Foreign", #includes Military and Expats returning
+                                     T ~ "Nonmigrant")) %>%
+  # Pivot wider based on migration group
+  pivot_wider(
+    id_cols = c(receiver_FIPS, year, receiver_county),
+    names_from = migration_group,
+    values_from = c(households, people, agi),
+    names_glue = "{migration_group}_{.value}"
+  )
+
+migration_income <- migration_income |>
+  filter(!is.na(Nonmigrant_people)) |>
+  mutate(across(everything(), ~ replace_na(.x, 0)),
+    agi = Total_migration_agi + Nonmigrant_agi,
+         households = Total_migration_households + Nonmigrant_households,
+         people = Total_migration_people + Nonmigrant_people) |>
+  rename(fips = receiver_FIPS,
+         county = receiver_county)
+```
+
+```{r}
+irs_data <- irs_data |>
+  mutate(gravity = (sender_people/1000)*(receiver_people/1000)/(dist^1.5), #empirical estimates of distance decay are generally less than 2, exponents on people are generally 0.8 to 0.9 (Poot et al. 2016)
+         instate = sender_state == receiver_state)
+#I don't see any reason why the exponents on people wouldn't be exactly 1, so I'm not including exponents there. Perhaps the empirical estimates are subject to various data quality issues, but I haven't done any research on that.
+```
+
+```{r}
+map_data = irs_data |>
+  group_by(sender_FIPS, receiver_FIPS, sender_state, receiver_state) |>
+  filter(as.numeric(sender_FIPS) < 90000) |> #delete summary rows
+  summarize(people = sum(people),
+            count = n(),
+            gravity = median(gravity),
+            ppg = people/gravity #ppg = people per gravity unit
+            )
+#for IRS, sender_FIPS == receiver_FIPS represents non-migrants (stayed in same county between years)
+```
+
+#This is code for looking up a county's FIPS code
+```{r}
+#county lookup
+data |>
+  filter(sender_state == "IN",
+         sender_county == "Lake County") |>
+  select(sender_FIPS, sender_county) |>
+  unique()
+```
+
+```{r}
+#This dataframe is good for mapping as it includes each flow with its counterflow. Thus we can use this data for one-way flows or net flows
+net_migration_irs <- map_data %>%
+  left_join(
+    map_data,
+    by = c("sender_FIPS" = "receiver_FIPS", "receiver_FIPS" = "sender_FIPS"),
+    suffix = c("", "_counterflow")
+  ) %>%
+  mutate(counterflow = ifelse(is.na(people_counterflow), 0, people_counterflow)) |>
+  rename(flow = people) |>
+  select(sender_FIPS, receiver_FIPS, sender_state, receiver_state, flow, counterflow)
+```
