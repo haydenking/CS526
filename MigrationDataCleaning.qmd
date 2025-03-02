@@ -199,47 +199,49 @@ county_names <- irs_data |>
 
 irs_data = irs_data |>
   left_join(county_names) #joining on receiver_county and receiver_state
-#Shannon County, SD and two Alaskan Census Areas got renamed, but that should have no impact on our analysis as the FIPS codes stayed the same
+#Shannon County, SD and two Alaskan Census Areas got renamed, but the FIPS codes stayed the same
 
 irs_data <- irs_data |>
-  filter(!(sender_county == "Washington County" & sender_state == "KS" & households_flow > 1000)) #there seems to be an issue with 2012 where a few Kansas counties received most of their population in migrants from Washington County, KS. Solution: drop three observations from 2012 where Washington County, KS sent over 1000 households (its population is ~5000) and one with no recipient (??)
+  filter(!((sender_county == "Washington County" | receiver_county == "Washington County") & sender_state == "KS" & sender_FIPS != receiver_FIPS & (people_flow > 1000 | people_counterflow > 1000)))
+ #there seems to be an issue with 2012 where a few Kansas counties received most of their population in migrants from Washington County, KS. Solution: drop three observations from 2012 where Washington County, KS sent over 1000 households (its population is ~5000) and one with no recipient (??)
+#missing one with very high in-migration
 
 #https://osf.io/wgcf3/?view_only=c5ba62fb4821421ea0621bfd0d723e61
 #county_migration_data.csv has data on 1991-2011
 
-irs_data_old = read_csv("Data/county_migration_data.csv")
-irs_data_old <- irs_data_old |>
-  rename(sender_FIPS = origin,
-         receiver_FIPS = destination) |>
-  filter(sender_FIPS != "99999",
-         receiver_FIPS != "99999") |> #these represent other (censored) flows and idk what we'd do with them
-  pivot_longer(cols = `1990`:`2010`, names_to = "year", values_to = "people_flow") |>
-  mutate(year = as.numeric(year) + 1, #they use the first of the two years, I use the second
-         people_flow = if_else(people_flow == -1, NA, people_flow),
-         people_counterflow = if_else(people_counterflow == -1, NA, people_counterflow)) 
+# irs_data_old = read_csv("Data/county_migration_data.csv")
+# irs_data_old <- irs_data_old |>
+#   rename(sender_FIPS = origin,
+#          receiver_FIPS = destination) |>
+#   filter(sender_FIPS != "99999",
+#          receiver_FIPS != "99999") |> #these represent other (censored) flows and idk what we'd do with them
+#   pivot_longer(cols = `1990`:`2010`, names_to = "year", values_to = "people_flow") |>
+#   mutate(year = as.numeric(year) + 1, #they use the first of the two years, I use the second
+#          people_flow = if_else(people_flow == -1, NA, people_flow)) 
+# 
+# # #create flow-counterflow data
+# counterflow = irs_data_old |>
+#   mutate(sender = receiver_FIPS,
+#          receiver_FIPS = sender_FIPS,
+#          sender_FIPS = sender) |>
+#   rename(people_counterflow = people_flow) |>
+#   mutate(people_counterflow = if_else(people_counterflow == -1, NA, people_counterflow)) |>
+#   select(-sender)
+# 
+# irs_data_old <- irs_data_old |>
+#   full_join(counterflow, by = c("sender_FIPS", "receiver_FIPS", "year")) |>
+#   filter(!(people_flow == 0 & people_counterflow == 0))
+# 
+# #migration probably follows a poisson distribution. Maybe we could impute the censored stuff?
+# 
+# #join the old data onto the new
+# irs_data_merged = bind_rows(irs_data, irs_data_old) |>
+#   select(-sender_st_FIPS, -sender_co_FIPS, -receiver_st_FIPS, -receiver_co_FIPS) #we don't really need these
 
-# #create flow-counterflow data
-counterflow = irs_data_old |>
-  mutate(sender = receiver_FIPS,
-         receiver_FIPS = sender_FIPS,
-         sender_FIPS = sender) |>
-  rename(people_counterflow = people_flow) |>
-  select(-sender)
+# irs_data_merged <- irs_data_merged |>
+#   filter(substr(sender_FIPS,1,2) != "57") #Remove immigration rows
 
-irs_data_old <- irs_data_old |>
-  full_join(counterflow, by = c("sender_FIPS", "receiver_FIPS", "year")) |>
-  filter(!(people_flow == 0 & people_counterflow == 0))
-
-#migration probably follows a poisson distribution. Maybe we could impute the censored stuff?
-
-#join the old data onto the new
-irs_data_merged = bind_rows(irs_data, irs_data_old) |>
-  select(-sender_st_FIPS, -sender_co_FIPS, -receiver_st_FIPS, -receiver_co_FIPS) #we don't really need these
-
-irs_data_merged <- irs_data_merged |>
-  filter(substr(sender_FIPS,1,2) != "57") #Remove immigration rows
-
-sender_county_names <- irs_data_merged |>
+sender_county_names <- irs_data |>
   select(sender_FIPS, sender_county, sender_state, year) |>
   filter(!is.na(sender_county), !is.na(sender_state)) |>
   group_by(sender_FIPS) |>
@@ -248,7 +250,7 @@ sender_county_names <- irs_data_merged |>
   ungroup() |>
   select(-year)
 
-irs_data_merged <- irs_data_merged |>
+irs_data <- irs_data |>
   group_by(sender_FIPS) |>
   arrange(desc(year)) |>
   mutate(sender_county = head(sender_county, n=1),
@@ -262,25 +264,62 @@ irs_data_merged <- irs_data_merged |>
   mutate(people_flow = replace_na(people_flow, 0),
          people_counterflow = replace_na(people_counterflow, 0))
 
-irs_data_merged = add_centroids(irs_data_merged, pop_centroids) #this part is really inefficient. I should join to just one year and then use fill() I think
-
-#TO DO: add lagged county-level populations
+irs_data = add_centroids(irs_data, pop_centroids) #this part is really inefficient. I should join to just one year and then use fill() I think
 
 #note that non-migrant rows are kept as of now
+
+totals <- totals %>%
+  mutate(migration_group = case_when(sender_FIPS == "96000" ~ "Total_migration",
+                                     sender_FIPS == "97000" ~ "US_migration",
+                                     sender_FIPS == "97001" ~ "Instate",
+                                     sender_FIPS == "97003" ~ "Diffstate",
+                                     sender_FIPS == "98000" ~ "Foreign", #includes Military and Expats
+                                     T ~ "Nonmigrant")) %>%
+  filter(!(year == 2012 & str_detect(sender_county, "Republic|Washington|Cloud|Jewell|Smith") & sender_state == "KS" )) |>
+  select(-sender_county) |>
+  pivot_wider(
+    id_cols = c(receiver_FIPS, year),
+    names_from = migration_group,
+    values_from = c(households_flow, people_flow, agi_flow, households_counterflow, people_counterflow, agi_counterflow),
+    names_glue = "{migration_group}_{.value}"
+  )
 ```
 
 #Add county-level populations
 ```{r}
-pops9000 <- readr::dead_delim("https://www2.census.gov/programs-surveys/popest/tables/1990-2000/estimates-and-change-1990-2000/2000c8_00.txt") #need to clean this
+library(readxl)
+# pops9000 <- readr::dead_delim("https://www2.census.gov/programs-surveys/popest/tables/1990-2000/estimates-and-change-1990-2000/2000c8_00.txt") #need to clean this
+# 
+# #https://www.census.gov/data/datasets/time-series/demo/popest/intercensal-2000-2010-counties.html
+# pops0010 <- read_csv(paste0(datapath,"county_pops_2000-2010.csv")) |>
+#   filter(COUNTY != 0) |>
+#   mutate(fips = paste0(sprintf("%02s",STATE), sprintf("%03s",COUNTY))) |>
+#   rename_with(~ str_replace(.x, "POPESTIMATE", "pop")) |>
+#   select(contains("pop20"), fips)
+# pops1019 <- read_excel(paste0(datapath,"county_pops10-19.xlsx"))
+# pops2023 <- read_excel(paste0("county_pops20-23.xlsx"))
 
+county_pops = totals |> 
+  mutate(receiver_pop = Total_migration_people_counterflow + Nonmigrant_people_flow) |> 
+  select(receiver_FIPS, receiver_pop, year)
+
+irs_data <- irs_data_merged |>
+  left_join(county_pops, by = c("year", "receiver_FIPS"))
+
+county_pops <- county_pops |>
+  rename(sender_FIPS = receiver_FIPS,
+         sender_pop = receiver_pop)
+
+irs_data <- irs_data |>
+  left_join(county_pops, by = c("year", "sender_FIPS"))
 
 ```
-
-
 
 ```{r}
 #save IRS data so you don't have to do this all the time
 #write.csv(irs_data_merged, paste0(datapath, "irs_migration_data_1991-2022.csv"), row.names = FALSE)
+
+#write.csv(irs_data, paste0(datapath, "irs_migration_data_2012-2022.csv"), row.names = FALSE)
 #write.csv(totals, paste0(datapath, "irs_data_totals_2012-2022.csv"), row.names = FALSE)
 ```
 
@@ -292,55 +331,11 @@ data = read_csv(paste0(datapath,"irs_migration_data_1991-2022.csv"))
 totals = read_csv(paste0(datapath, "irs_data_totals_2012-2022.csv"))
 ```
 
-#This code is written for the IRS data.
-```{r}
-#This data could help us analyze differences in income between migrants and non-migrants
-#Keep in mind that the IRS only has data on households who file taxes in two consecutive years, so I believe that foreign immigrants are generally not included because the year they immigrate they almost certainly didn't file US taxes the previous year.
-#I need to double check/do more research, but I believe that the "Foreign" category is primarily military families returning from foreign deployment and expats returning
-migration_income <- totals |>
-  mutate(migration_group = case_when(sender_FIPS == "96000" ~ "Total_migration",
-                                     sender_FIPS == "97000" ~ "US_migration",
-                                     sender_FIPS == "97001" ~ "Instate",
-                                     sender_FIPS == "97003" ~ "Diffstate",
-                                     sender_FIPS == "98000" ~ "Foreign", #includes Military and Expats returning
-                                     T ~ "Nonmigrant")) %>%
-  # Pivot wider based on migration group
-  pivot_wider(
-    id_cols = c(receiver_FIPS, year, receiver_county),
-    names_from = migration_group,
-    values_from = c(households, people, agi),
-    names_glue = "{migration_group}_{.value}"
-  )
-
-migration_income <- migration_income |>
-  filter(!is.na(Nonmigrant_people)) |>
-  mutate(across(everything(), ~ replace_na(.x, 0)),
-    agi = Total_migration_agi + Nonmigrant_agi,
-         households = Total_migration_households + Nonmigrant_households,
-         people = Total_migration_people + Nonmigrant_people) |>
-  rename(fips = receiver_FIPS,
-         county = receiver_county)
-```
-
-I need to work on getting county populations that go back to 1990. The current data doesn't have sender_pop and receiver_pop
 ```{r}
 irs_data <- irs_data |>
   mutate(gravity = (sender_pop/1000)*(receiver_pop/1000)/(dist^1.5), #empirical estimates of distance decay are generally less than 2, exponents on people are generally 0.8 to 0.9 (Poot et al. 2016)
          instate = sender_state == receiver_state)
-#I don't see any reason why the exponents on people wouldn't be exactly 1, so I'm not including exponents there. Perhaps the empirical estimates are subject to various data quality issues, but I haven't done any research on that.
-```
-
-```{r}
-map_data = irs_data |>
-  group_by(sender_FIPS, receiver_FIPS, sender_state, receiver_state) |>
-  summarize(people_flow = sum(people_flow),
-            people_counterflow = sum(people_counterflow),
-            people_net = people_flow - people_counterflow,
-            count = n(), #number of years in which that flow is observed
-            gravity = median(gravity),
-            ppg = people/gravity #ppg = people per gravity unit
-            )
-#sender_FIPS == receiver_FIPS represents non-migrants (stayed in same county between years)
+#In an ideal world the exponents would be exactly 1 I think, but the IRS data are imperfect and the granularity of the counties has an impact as well. Perhaps the empirical estimates are subject to various data quality issues, but I haven't done any research on that.
 ```
 
 #This is code for looking up a county's FIPS code
