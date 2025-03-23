@@ -238,13 +238,15 @@ handle_bubbles <- function(map, state_map, max_bubble_size, low_color, high_colo
   
   return(plot)
 }
+
 ```
 #handle_choropleth
 ```{r}
-handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration, centered_at_0) {
+handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration, center) {
   if (!is.na(breaks[1])) {
-    if (centered_at_0) {
+    if (!is.na(center)) {
       breaks <- c(-abs(breaks), abs(breaks)) #net migration breaks must contain 0 and must be symmetrical
+      breaks <- breaks + center
       breaks <- c(floor(min(map$Value, na.rm = T)),
                   breaks,
                   ceiling(max(map$Value, na.rm = T))) #round_to_sigfigs doesn't go below 0. I think this was because a negative endpoint was displayed and i didn't like it. Could modify the function and put that 
@@ -277,7 +279,7 @@ handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color,
         labels = formatted_labels
       ))
     color_column = "Category"
-    if(centered_at_0){
+    if(!is.na(center)){
       #length(breaks) should be even
       low_palette <- seq_gradient_pal(low_color, "beige")(seq(0, 1, length.out = length(breaks)/2))
       high_palette <- seq_gradient_pal("beige", high_color)(seq(0, 1, length.out = length(breaks)/2))
@@ -334,7 +336,7 @@ handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color,
 
 ###map
 ```{r}
-map <- function(data, county_map, MSA_map = NULL, state_map = NULL, title, font_size = NA, years = 2012:2021, bubbles = TRUE, unit = "", per = "", max_bubble_size = NA, continental = FALSE, high_color = "darkblue", low_color = "beige", highlight_color = "steelblue", countylines = FALSE, graphicspath, inset_cutoff = -1000000000, cutoff_column = "Value", breaks = NA, imputed_to_na = FALSE, na_to_0 = FALSE, caption_manual = "", labels_manual = NA, inset_style = "top", subtitle = NA, region_fips = NA, cbsa = NA, migration_type = NA, merge_MSAs = F, centered_at_0 = F, simulate = F) {
+map <- function(data, county_map, MSA_map = NULL, state_map = NULL, title, font_size = NA, years = 2012:2021, bubbles = TRUE, unit = "", per = "", max_bubble_size = NA, continental = FALSE, high_color = "darkblue", low_color = "beige", highlight_color = "steelblue", countylines = FALSE, graphicspath, inset_cutoff = -1000000000, cutoff_column = "Value", breaks = NA, imputed_to_na = FALSE, na_to_0 = FALSE, caption_manual = "", labels_manual = NA, inset_style = "top", subtitle = NA, region_fips = NA, cbsa = NA, migration_type = NA, merge_MSAs = F, center = NA, simulate = F) {
   #years should be a list of years. It can be specified 2019:2022 for example
     first_year <- min(years)
     last_year <- max(years)
@@ -356,7 +358,7 @@ map <- function(data, county_map, MSA_map = NULL, state_map = NULL, title, font_
   netmigration = F
   if(!is.na(migration_type)){
     if(migration_type == "net"){
-      centered_at_0 = T
+      center = 0
       netmigration = T
     }
      data = get_migration_data(data, region_fips, migration_type, simulate)
@@ -371,11 +373,13 @@ map <- function(data, county_map, MSA_map = NULL, state_map = NULL, title, font_
         num_years = if_else(substr(fips, 1, 2) == "09", num_years_ct, num_years_notct),
         #CT
         Value = Value / num_years
-      )
+      ) |>
+      group_by(fips) |>
+      summarize(Value = sum(Value,na.rm=T))
     subtitle <- if_else(is.na(subtitle) &
                           per == "year", "Rate per year", subtitle)
   }
-  if(!centered_at_0 & min(data$Value, na.rm = T) < 0){
+  if(is.na(center) & min(data$Value, na.rm = T) < 0){
     cat("Warning: negative Values in data\n")
   }
   region = NA
@@ -483,7 +487,7 @@ map <- map |>
   map <- map |>
     mutate(cutoff = !!rlang::sym(cutoff_column))
 
-  if(centered_at_0){
+  if(!is.na(center)){
     inset_style = "split" #only looking at one way wouldn't make sense
   }
   
@@ -530,7 +534,7 @@ map <- map |>
   if (bubbles) {
     plot <- handle_bubbles(map, state_map, max_bubble_size, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration)
   } else {
-    chloropleth <- handle_chloropleth(map, state_map, breaks, labels_manual, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration, centered_at_0)
+    chloropleth <- handle_chloropleth(map, state_map, breaks, labels_manual, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration, center)
     plot = chloropleth$plot
     breaks = chloropleth$breaks
   }

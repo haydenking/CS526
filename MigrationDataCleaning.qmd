@@ -34,7 +34,7 @@ return(centroid_data)
 pop_centroids = clean_pop_centroids(read_csv(paste0(datapath,"county_pop_centroids_2020.txt")))
 
 #Because CT now uses Planning Regions instead of counties, I use geographic centroids from https://www.census.gov/geographies/reference-files/time-series/geo/gazetteer-files.2024.html#list-tab-264479560 instead of population centroids (which were based on historical counties)
-CT = read.table(paste0(wd,"2024_Gaz_counties_national.txt"), sep = '\t', header = TRUE) |>
+CT = read.delim(paste0(wd,"2024_Gaz_counties_national.txt"), stringsAsFactors = FALSE) |>
   filter(USPS == "CT") |>
   select(USPS, GEOID, NAME, INTPTLAT, INTPTLONG) |>
   mutate(FIPS = sprintf("%05d", as.integer(GEOID)), #Make sure FIPS code is 5 digits
@@ -314,6 +314,34 @@ irs_data <- irs_data |>
   left_join(county_pops, by = c("year", "sender_FIPS"))
 
 ```
+
+```{r}
+#Add Urban Influence Codes
+# https://www.ers.usda.gov/data-products/urban-influence-codes
+#maybe population density would be better, will try both
+# library(readxl)
+# uicodes <- read_excel("UrbanInfluenceCodes2013.xls")
+
+areas = rbind(read.delim(paste0(wd,"2020_Gaz_counties_national.txt"), stringsAsFactors = FALSE),
+read.delim(paste0(wd,"2024_Gaz_counties_national.txt"), stringsAsFactors = FALSE)) |>
+  group_by(GEOID) |>
+  slice_head(n=1) |>
+  ungroup() |>
+  mutate(fips = sprintf("%05d", GEOID)) |>
+  rename(sqmi = ALAND_SQMI) |>
+  select(fips, sqmi)
+
+irs_data  = irs_data |>
+  left_join(areas |> rename(sender_FIPS = fips, sender_sqmi = sqmi)) |>
+  mutate(sender_density = sender_pop/sender_sqmi) |>
+  select(-sender_sqmi)
+
+irs_data  = irs_data |>
+  left_join(areas |> rename(receiver_FIPS = fips, receiver_sqmi = sqmi)) |>
+  mutate(receiver_density = receiver_pop/receiver_sqmi) |>
+  select(-receiver_sqmi)
+```
+
 
 ```{r}
 #save IRS data so you don't have to do this all the time
