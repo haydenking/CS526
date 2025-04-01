@@ -19,20 +19,17 @@ cvap = read.csv(paste0(datapath, "final_with_CVAP_after_divide.csv")) |>
   rename(cvap_2012 = CVAP_EST_2012,
          cvap_2016 = CVAP_EST_2016,
          cvap_2020 = cvap_est)
-cvap <- cvap %>%
+cvap <- cvap |>
   pivot_longer(
-    cols = matches("_"), # Selects columns with CVAP_YYYY or total_YYYY
+    cols = matches("_"),
     names_to = c(".value", "year"),
     names_sep = "_") |>
   rename(turnout = total.CVAP) |>
   mutate(year = as.numeric(year))
 
-#political salience = turnout (for now)
-#scaled_salience = turnout * partisan bias
-
 cvap = cvap |>
-  mutate(scaled_salience = (gop - dem)/cvap) |>
-  select(scaled_salience, fips, year)
+  mutate(pct_gop = gop/total) |>
+  select(pct_gop, turnout, fips, year)
 
 cvap = rbind(cvap, 
              cvap |> mutate(year = year +1),
@@ -40,14 +37,52 @@ cvap = rbind(cvap,
              cvap |> mutate(year = year +3)) #kind of a busted way to do this but it works
 
 irs_data = irs_data |>
-  left_join(cvap |> rename(receiver_FIPS = fips, receiver_salience = scaled_salience), by = join_by(year, receiver_FIPS))
+  left_join(cvap |> rename(receiver_FIPS = fips, receiver_gop = pct_gop, receiver_turnout = turnout), by = join_by(year, receiver_FIPS))
 
 irs_data = irs_data |>
-  left_join(cvap |> rename(sender_FIPS = fips, sender_salience = scaled_salience), by = join_by(year, sender_FIPS))
+  left_join(cvap |> rename(sender_FIPS = fips, sender_gop = pct_gop, sender_turnout = turnout), by = join_by(year, sender_FIPS))
+
+clean_donations <- function(df){
+  YEAR = max(df$YEAR)
+  generalelection = (YEAR %% 4 == 0)
+  
+  #avg_donation_per_capita makes no sense. it's total donations/donors/population
+  df <- df |>
+    filter(total_donations != 0) |> #unfortunately we're missing data on New England and New Jersey for some years (and some years it is very low suggesting it may be incomplete)
+  mutate(fips = sprintf("%05d",FIPS_STRING)) |>
+  select(total_donations, fips) |>
+    group_by(fips) |>
+    summarize(donations = sum(total_donations)) |>
+    ungroup() |>
+    mutate(year = YEAR)
+  
+  df = rbind(df, df |> mutate(year = year - 1))
+  df$generalelection = generalelection
+  
+  return(df)
+}
+
+donation_data = NULL
+for(election in c(2012, 2014, 2016, 2018, 2020, 2022)){
+  df = read.csv(paste0(datapath, "fec_summary_cleaned_",election-1,"_",election,".csv"))
+  df = clean_donations(df)
+  donation_data = rbind(donation_data, df)
+}
+
+irs_data = irs_data |>
+  left_join(donation_data |> rename(sender_FIPS = fips, sender_donations = donations), by = join_by(year, sender_FIPS))
+
+irs_data = irs_data |>
+  left_join(donation_data |> rename(receiver_FIPS = fips, receiver_donations = donations) |> select(-generalelection), join_by(year, receiver_FIPS))
+
+irs_data = irs_data |>
+  mutate()
+
 ```
 
 ```{r}
-model = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(1+dist),3) + as.factor(uic_receiver)*as.factor(uic_sender) + as.factor(year) + I(sender_salience - receiver_salience) + sender_salience*receiver_salience, data = irs_data)
+model = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(1+dist),3) + as.factor(uic_receiver)*as.factor(uic_sender) + as.factor(year)*I((sender_gop - receiver_gop)*(sender_turnout + receiver_turnout)) + I((sender_gop - receiver_gop)*(sender_donations/sender_pop + receiver_donations/receiver_pop)), data = irs_data)
+#+ I((sender_gop - receiver_gop)*(sender_donations/agi_flow + receiver_donations/agi_counterflow))
 
 model = lm(log(people_flow) ~ log(sender_pop) + log(receiver_pop) + poly(log(1+dist),4) + instate, data = irs_data )
 
