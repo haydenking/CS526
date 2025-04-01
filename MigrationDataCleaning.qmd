@@ -232,8 +232,6 @@ irs_data <- irs_data |>
 #   full_join(counterflow, by = c("sender_FIPS", "receiver_FIPS", "year")) |>
 #   filter(!(people_flow == 0 & people_counterflow == 0))
 # 
-# #migration probably follows a poisson distribution. Maybe we could impute the censored stuff?
-# 
 # #join the old data onto the new
 # irs_data_merged = bind_rows(irs_data, irs_data_old) |>
 #   select(-sender_st_FIPS, -sender_co_FIPS, -receiver_st_FIPS, -receiver_co_FIPS) #we don't really need these
@@ -303,7 +301,7 @@ county_pops = totals |>
   mutate(receiver_pop = Total_migration_people_counterflow + Nonmigrant_people_flow) |> 
   select(receiver_FIPS, receiver_pop, year)
 
-irs_data <- irs_data_merged |>
+irs_data <- irs_data |>
   left_join(county_pops, by = c("year", "receiver_FIPS"))
 
 county_pops <- county_pops |>
@@ -320,7 +318,16 @@ irs_data <- irs_data |>
 # https://www.ers.usda.gov/data-products/urban-influence-codes
 #maybe population density would be better, will try both
 # library(readxl)
-# uicodes <- read_excel("UrbanInfluenceCodes2013.xls")
+uicodes <- read_excel("UrbanInfluenceCodes2013.xls") |>
+  rename(fips = FIPS,
+         uic = UIC_2013) |>
+  select(fips, uic)
+
+irs_data <- left_join(irs_data, uicodes |>
+                    rename(receiver_FIPS = fips, uic_receiver = uic))
+
+irs_data <- left_join(irs_data, uicodes |>
+                    rename(sender_FIPS = fips, uic_sender = uic))
 
 areas = rbind(read.delim(paste0(wd,"2020_Gaz_counties_national.txt"), stringsAsFactors = FALSE),
 read.delim(paste0(wd,"2024_Gaz_counties_national.txt"), stringsAsFactors = FALSE)) |>
