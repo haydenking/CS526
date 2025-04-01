@@ -76,13 +76,14 @@ irs_data = irs_data |>
   left_join(donation_data |> rename(receiver_FIPS = fips, receiver_donations = donations) |> select(-generalelection), join_by(year, receiver_FIPS))
 
 irs_data = irs_data |>
-  mutate()
-
+  mutate(scaled_turnout = sender_gop*sender_turnout - receiver_gop*receiver_turnout,
+         scaled_donations = sender_gop*sender_donations/sender_pop - receiver_gop*receiver_donations/receiver_pop,
+         partisan_gap = sender_gop - receiver_gop)
 ```
 
 ```{r}
-model = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(1+dist),3) + as.factor(uic_receiver)*as.factor(uic_sender) + as.factor(year)*I((sender_gop - receiver_gop)*(sender_turnout + receiver_turnout)) + I((sender_gop - receiver_gop)*(sender_donations/sender_pop + receiver_donations/receiver_pop)), data = irs_data)
-#+ I((sender_gop - receiver_gop)*(sender_donations/agi_flow + receiver_donations/agi_counterflow))
+model = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(1+dist),3) + as.factor(uic_receiver)*as.factor(uic_sender) + as.factor(year)*scaled_turnout + as.factor(year)*scaled_donations + partisan_gap, data = irs_data)
+
 
 model = lm(log(people_flow) ~ log(sender_pop) + log(receiver_pop) + poly(log(1+dist),4) + instate, data = irs_data )
 
