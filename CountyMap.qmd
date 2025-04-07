@@ -1,7 +1,7 @@
 ---
 title: "CountyMap"
 format: html
-editor: visual
+editor: source
 ---
 
 This file creates and reads in the county_map shapefile and the MSA map
@@ -15,6 +15,7 @@ library(sf)
 ```
 
 #Read in pre-saved county_map, MSAs, and state_map
+
 ```{r}
 #https://www.census.gov/geographies/reference-files/time-series/demo/metro-micro/historical-delineation-files.html
 #older version so it has CT historical counties
@@ -26,7 +27,6 @@ MSAs = read_xls(paste0(wd,"MSAs.xls")) |>
          cbsa_code = `CBSA Code`) |>
   mutate(fips = paste0(st_FIPS, co_FIPS),
          area_type = case_when(area_type == "Metropolitan Statistical Area" ~ "metro", area_type == "Micropolitan Statistical Area" ~ "micro", T ~ NA))
-#at some point I should make an MSA map because running st_union every time I want an MSA map takes forever
 
   state_map <- us_map("states")
   
@@ -35,8 +35,8 @@ MSAs = read_xls(paste0(wd,"MSAs.xls")) |>
 
 #Code below is for creating the county_map shapefiles, but I already uploaded the folder with the shapefiles. Just run the first code chunk to load them in.
 
-##Create county_map
-Map comes with populations 2010-2023
+##Create county_map Map comes with populations 2010-2023
+
 ```{r}
 library(usmap)
 library(sf)
@@ -59,6 +59,7 @@ ct_map <- st_transform(ct_map, st_crs(county_map)) |>
 county_map = rbind(county_map, ct_map)
   
   #don't use the centroids from this because they take into account water area causing those around the Great Lakes to be off
+#areas needed for population density of counties
   areas = read.delim(paste0(wd,"2020_Gaz_counties_national.txt"), stringsAsFactors = FALSE) |> #older so that it has CT historical counties
     filter(GEOID < 57000) |> #remove territories
     rename(sqmi = ALAND_SQMI) |> #land area measured in square miles
@@ -102,6 +103,7 @@ county_map = left_join(county_map, county_pops_recent, by = c("county", "state")
              pop20 = if_else(is.na(pop20), pop, pop20) #pop is pop20, but this fixes it for CT counties
              )
 ```
+
 #Add Centroids
 
 ```{r}
@@ -109,10 +111,6 @@ county_map$centroid = st_centroid(county_map$geometry)
 county_map <- county_map |>
   mutate(x = st_coordinates(centroid)[, 1],
          y = st_coordinates(centroid)[, 2],
-         x = if_else(county == "Kenai Peninsula Ag District", x+40000, x), #fix Alaska centroids
-         y = if_else(county == "Southwest & West Ag District", y-210000, y),
-         x = if_else(county == "Southeast Ag District", x - 50000, x),
-         y = if_else(county == "Southeast Ag District", y +50000, y),
          name = paste0(county, ", ", abbr)) |>
   select(-centroid)
 ```
@@ -120,7 +118,6 @@ county_map <- county_map |>
 ```{r}
 #For saving county_map (migration data, CT historical counties)
 #st_write(county_map, "county_map/county_map.shp", delete_dsn = TRUE)
-
 ```
 
 #This creates the MSA_map shapefile from county_map
