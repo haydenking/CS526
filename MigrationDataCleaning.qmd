@@ -7,7 +7,6 @@ editor: visual
 ```{r}
 wd = "/Users/Hayden/CS526/" #Customize as needed
 datapath = paste0(wd, "Data/")
-graphicspath = paste0(wd, "Maps/")
 library(tidyverse)
 library(readr)
 library(stringr)
@@ -362,23 +361,6 @@ irs_data  = irs_data |>
 
 #Read in the clean data
 ```{r suppress = TRUE}
-data = read_csv(paste0(datapath,"irs_migration_data_1991-2022.csv"))
-totals = read_csv(paste0(datapath, "irs_data_totals_2012-2022.csv"))
-```
-
-```{r}
-irs_data <- irs_data |>
-  mutate(gravity = (sender_pop/1000)*(receiver_pop/1000)/(dist^1.5), #empirical estimates of distance decay are generally less than 2, exponents on people are generally 0.8 to 0.9 (Poot et al. 2016)
-         instate = sender_state == receiver_state)
-#In an ideal world the exponents would be exactly 1 I think, but the IRS data are imperfect and the granularity of the counties has an impact as well. Perhaps the empirical estimates are subject to various data quality issues, but I haven't done any research on that.
-```
-
-#This is code for looking up a county's FIPS code
-```{r}
-#county lookup
-data |>
-  filter(sender_state == "IN",
-         sender_county == "Lake County") |>
-  select(sender_FIPS, sender_county) |>
-  unique()
+# data = read_csv(paste0(datapath,"irs_migration_data_1991-2022.csv"))
+# totals = read_csv(paste0(datapath, "irs_data_totals_2012-2022.csv"))
 ```

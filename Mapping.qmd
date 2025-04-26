@@ -1,0 +1,245 @@
+---
+title: "Mapping"
+format: pdf
+editor: visual
+---
+
+```{r}
+library(tidyverse)
+library(sf)
+library(usmap)
+library(readxl)
+wd = "/Users/Hayden/CS526/" #Customize as needed
+datapath = paste0(wd, "Data/")
+graphicspath = paste0(wd, "Maps/")
+irs_data = read_csv("Data/irs_migration_data_2012-2022.csv")
+totals = read_csv("Data/irs_data_totals_2012-2022.csv")
+
+#MSAs, county_map, and state_map should already be in the environment from CountyMap.qmd
+```
+
+```{r}
+# map(
+#   data = irs_data,
+#   county_map = county_map,
+#   state_map = state_map,
+#   title = "NYC Out-Migration During COVID",
+#   subtitle = "Rate per year",
+#   years = 2020:2022,
+#   per = "year",
+#   bubbles = T,
+#   graphicspath = graphicspath,
+#   high_color = "#DC3220",
+#   low_color = "beige",
+#   continental = F,
+#   migration_type = "out",
+#   cutoff_column = "pop",
+#   inset_cutoff = 100000,
+#   #merge_MSAs = T,
+#   region_fips = c("36047","36081","36061","36005","36085")
+# )
+# 
+# region_fips = MSAs |>
+#   filter(str_detect(metro_name, "Chicago")) |>
+#   select(fips) |>
+#   pull()
+# 
+# map(
+#   data = irs_data,
+#   county_map = county_map,
+#   state_map = state_map,
+#   title = "Chicago In-Migration",
+#   subtitle = "Rate per year",
+#   years = 2012:2022,
+#   per = "year",
+#   bubbles = T,
+#   graphicspath = graphicspath,
+#   high_color = "forestgreen",
+#   low_color = "beige",
+#   continental = F,
+#   migration_type = "in",
+#   #merge_MSAs = T,
+#   region_fips = region_fips
+# )
+
+# map(
+#   data = irs_data,
+#   county_map = county_map,
+#   state_map = state_map,
+#   title = "Simulated Chicago In-Migration",
+#   subtitle = "Rate per year",
+#   years = 2012:2022,
+#   per = "year",
+#   bubbles = T,
+#   graphicspath = graphicspath,
+#   high_color = "purple",
+#   low_color = "beige",
+#   continental = F,
+#   migration_type = "in",
+#   #merge_MSAs = T,
+#   region_fips = region_fips,
+#   simulate = T
+# )
+
+#simulate hasn't been updated for most recent model
+```
+
+```{r}
+ratio <- totals |>
+  #filter(year > 2019) |>
+  group_by(receiver_FIPS) |>
+  summarize(across(-year, mean, na.rm = TRUE)) |>
+  ungroup() |>
+  mutate(Value = log(Total_migration_people_flow/Total_migration_people_counterflow)) |>
+  rename(fips = receiver_FIPS)
+
+map(
+  data = ratio,
+  county_map = county_map,
+  state_map = state_map,
+  title = "Log Domestic Migration Ratio",
+  subtitle = "Ratio of In-Migration to Out-Migration",
+  years = 2012:2022,
+  bubbles = F,
+  graphicspath = graphicspath,
+  low_color = "#CC5500",
+  high_color = "forestgreen",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  center = 0,
+  breaks = c(0.1,0.2,0.3)
+  #merge_MSAs = T
+)
+```
+
+#Total inflows and Outflows
+```{r}
+map(
+  data = totals |> rename(Value = US_migration_people_flow, fips = receiver_FIPS),
+  county_map = county_map,
+  state_map = state_map,
+  title = "Domestic In-Migrants Per Capita",
+  subtitle = "Percent of Population per year",
+  years = 2012:2022,
+  per = "capita",
+  bubbles = F,
+  graphicspath = graphicspath,
+  low_color = "forestgreen",
+  high_color = "#CC5500",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  unit = "%",
+  breaks = c(0.5,1.5,2.5,3.5),
+  center = 4.5
+  #merge_MSAs = T
+)
+
+map(
+  data = totals |> rename(Value = US_migration_people_counterflow, fips = receiver_FIPS),
+  county_map = county_map,
+  state_map = state_map,
+  title = "Domestic Out-Migrants Per Capita",
+  subtitle = "Percent of Population per year",
+  years = 2012:2022,
+  per = "capita",
+  bubbles = F,
+  graphicspath = graphicspath,
+  low_color = "forestgreen",
+  high_color = "#CC5500",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  unit = "%",
+  breaks = c(0.5,1.5,2.5,3.5),
+  center = 4.5
+  #merge_MSAs = T
+)
+
+map(
+  data = totals |> mutate(Value = US_migration_people_flow-US_migration_people_counterflow) |> rename(fips = receiver_FIPS),
+  county_map = county_map,
+  state_map = state_map,
+  title = "Domestic Net Migration Per Capita",
+  subtitle = "Percent of Population per year",
+  years = 2012:2022,
+  per = "capita",
+  bubbles = F,
+  graphicspath = graphicspath,
+  high_color = "forestgreen",
+  low_color = "#CC5500",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  unit = "%",
+  breaks = c(0.5,1.5,2.5),
+  center = 0
+  #merge_MSAs = T
+)
+```
+
+```{r}
+#US map with CT planning regions
+county_map_planningregions = st_read("county_map_planningregions/county_map_planningregions.shp")
+
+donation_data = NULL
+for(election in c(2012, 2014, 2016, 2018, 2020, 2022)){
+  df = read.csv(paste0(datapath, "fec_summary_cleaned_",election-1,"_",election,".csv"))
+  df = clean_donations(df)
+  donation_data = rbind(donation_data, df)
+}
+
+donation_data = donation_data |>
+  filter(year == 2020) |>
+  rename(Value = donations)
+
+map(
+  data = donation_data,
+  county_map = county_map_planningregions,
+  state_map = state_map,
+  title = "Individual Donations Per Capita",
+  subtitle = "2019-2020 Federal Election Cycle",
+  per = "capita",
+  year = 2020,
+  bubbles = F,
+  graphicspath = graphicspath,
+  high_color = "forestgreen",
+  low_color = "beige",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  unit = "$",
+  breaks = c(0.1,0.25,0.5,1,2),
+  caption_manual = "Source: FEC Donation Data"
+)
+```
+
+```{r}
+#assumes cvap data is read in from Regressions.qmd
+
+#Turnout map
+map(
+  data = cvap |>
+  filter(year == 2020) |>
+  rename(Value = turnout) |>
+  mutate(Value = if_else(Value > 1, 1, Value)),
+  county_map = county_map,
+  state_map = state_map,
+  title = "2020 Presidential Election Voter Turnout",
+  subtitle = "Votes cast as a portion of Citizen Voting Age Population",
+  year = 2020,
+  bubbles = F,
+  graphicspath = graphicspath,
+  high_color = "forestgreen",
+  low_color = "#CC5500",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  unit = "%",
+  center = 66,
+  breaks = c(2,6,10,14),
+  caption_manual = "Source: Census CVAP data and election data compiled by Tony McGovern"
+)
+```
+

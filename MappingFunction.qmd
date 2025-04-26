@@ -1,8 +1,9 @@
 ---
 title: "Map"
 format: html
-editor: visual
+editor: source
 ---
+
 ```{r}
 library(tidyverse)
 library(readxl)
@@ -11,7 +12,9 @@ library(ggplot2)
 library(sf)
 library(ggfx)
 ```
+
 #create_inset
+
 ```{r}
 create_inset <- function(map, style, n, inset_cutoff = c("top", "bottom"), cutoff_column, dollar, unit, merge_MSAs, netmigration) {
   inset_data <- map |>
@@ -58,7 +61,9 @@ create_inset <- function(map, style, n, inset_cutoff = c("top", "bottom"), cutof
   return(new_inset)
 }
 ```
+
 #add_theme
+
 ```{r}
 add_theme <- function(plot, title, subtitle, font_size, caption, inset_text, breaks, bubbles, max_bubble_size, continental) {
   caption_line_height = 0.025
@@ -145,7 +150,9 @@ add_theme <- function(plot, title, subtitle, font_size, caption, inset_text, bre
   return(plot)
 }
 ```
+
 #handle_per_capita
+
 ```{r}
 handle_per_capita <- function(map, per, subtitle) {
   
@@ -170,7 +177,9 @@ handle_per_capita <- function(map, per, subtitle) {
   return(list(map = map, subtitle = subtitle))
 }
 ```
+
 #handle_bubbles
+
 ```{r}
 handle_bubbles <- function(map, state_map, max_bubble_size, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration) {
   map <- map |>
@@ -240,7 +249,9 @@ handle_bubbles <- function(map, state_map, max_bubble_size, low_color, high_colo
 }
 
 ```
+
 #handle_choropleth
+
 ```{r}
 handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color, high_color, countylines, dollar, unit, region, highlight_color, netmigration, center) {
   if (!is.na(breaks[1])) {
@@ -335,6 +346,7 @@ handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color,
 ```
 
 ###map
+
 ```{r}
 map <- function(data, county_map, MSA_map = NULL, state_map = NULL, title, font_size = NA, years = 2012:2021, bubbles = TRUE, unit = "", per = "", max_bubble_size = NA, continental = FALSE, high_color = "darkblue", low_color = "beige", highlight_color = "steelblue", countylines = FALSE, graphicspath, inset_cutoff = -1000000000, cutoff_column = "Value", breaks = NA, imputed_to_na = FALSE, na_to_0 = FALSE, caption_manual = "", labels_manual = NA, inset_style = "top", subtitle = NA, region_fips = NA, cbsa = NA, migration_type = NA, merge_MSAs = F, center = NA, simulate = F) {
   #years should be a list of years. It can be specified 2019:2022 for example
@@ -460,13 +472,18 @@ map <- map |>
     unit <- paste0(" ", unit)
   }
   
-    caption_manual <- ifelse(!str_detect(caption_manual, "\n$") & caption_manual != "", str_c(caption_manual, "\n"), caption_manual) #make sure manual caption ends in \n
-
-    if(last_year > 2021){
-       caption_manual = paste0(caption_manual, "Connecticut data is ",first_year,"-",2021,"\n") #mapping function uses CT historical counties and the last year the IRS reported by CT historical counties was 2021
+    
+if(caption_manual == ""){
+  if(last_year > 2021){
+       caption = paste0("Connecticut data is ",first_year,"-",2021,"\n") #mapping function uses CT historical counties and the last year the IRS reported by CT historical counties was 2021
+  } else{
+      caption = ""
     }
-    caption <- paste0("Source: ",first_year, "-", last_year," IRS Migration Data\n")
-    caption <- paste0(caption, caption_manual, "Created in R")
+    caption <- paste0(caption,"Source: ",first_year, "-", last_year," IRS Migration Data\n")
+} else {
+  caption <- ifelse(!str_detect(caption_manual, "\n$"), str_c(caption_manual, "\n"), caption_manual) #make sure manual caption ends in \n
+}
+    caption <- paste0(caption, "Created in R")
   
     if(per %in% c("capita", "year")){
       pop_cols <- paste0("pop", substr(years, 3, 4))
@@ -549,7 +566,9 @@ map <- map |>
   ggsave(filename = paste0(graphicspath, str_remove_all(title, " "), ".jpg"), plot = plot, dpi = 300, width = 10, height = 10)
 }
 ```
+
 ##helper functions
+
 ```{r}
 compute_breaks <- function(values) {
   max_value <- max(values, na.rm = TRUE)
@@ -605,6 +624,7 @@ shorten <- function(value) {
 ```
 
 #get_migration_data
+
 ```{r}
 get_migration_data <- function(data, region_fips, migration_type, simulate){
   data = data |>
@@ -663,4 +683,3 @@ get_migration_data <- function(data, region_fips, migration_type, simulate){
   return(data)
 }
 ```
-

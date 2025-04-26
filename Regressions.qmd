@@ -3,12 +3,19 @@ title: "Regressions"
 format: pdf
 editor: source
 ---
+
 ```{r}
 library(tidyverse)
 #system("git push origin main --force")
 
+wd = "/Users/Hayden/CS526/" #Customize as needed
+datapath = paste0(wd, "Data/")
+
+irs_data = read_csv(paste0(datapath,"irs_migration_data_2012-2022.csv"))
+totals = read_csv(paste0(datapath, "irs_data_totals_2012-2022.csv"))
+
 #make sure IRS data is loaded in
-irs_data = read_csv(paste0(datapath, "irs_migration_data_2012-2022.csv")) |>
+irs_data = irs_data |>
   filter(!is.na(dist),
          sender_FIPS != receiver_FIPS) |> #lm() automatically removes missing data but maybe this speeds it up a tad
   mutate(instate = (sender_state == receiver_state))
@@ -44,11 +51,10 @@ irs_data = irs_data |>
 
 clean_donations <- function(df){
   YEAR = max(df$YEAR)
-  generalelection = (YEAR %% 4 == 0)
   
   #avg_donation_per_capita makes no sense. it's total donations/donors/population
   df <- df |>
-    filter(total_donations != 0) |> #unfortunately we're missing data on New England and New Jersey for some years (and some years it is very low suggesting it may be incomplete)
+    unique() |>
   mutate(fips = sprintf("%05d",FIPS_STRING)) |>
   select(total_donations, fips) |>
     group_by(fips) |>
@@ -57,7 +63,6 @@ clean_donations <- function(df){
     mutate(year = YEAR)
   
   df = rbind(df, df |> mutate(year = year - 1))
-  df$generalelection = generalelection
   
   return(df)
 }
@@ -69,26 +74,64 @@ for(election in c(2012, 2014, 2016, 2018, 2020, 2022)){
   donation_data = rbind(donation_data, df)
 }
 
+cpi = read.csv(paste0(datapath, "cpi.csv"))
+#2024 dollars, from FRED
+
+#https://fred.stlouisfed.org/series/CPIAUCSL#
+
+colnames(cpi) = c("year", "cpi")
+
+cpi <- cpi |>
+  mutate(year = as.numeric(str_sub(year, 0, 4)))
+
+donation_data <- donation_data |>
+  left_join(cpi) |>
+  mutate(donations = donations / (cpi/100))
+
 irs_data = irs_data |>
   left_join(donation_data |> rename(sender_FIPS = fips, sender_donations = donations), by = join_by(year, sender_FIPS))
 
 irs_data = irs_data |>
-  left_join(donation_data |> rename(receiver_FIPS = fips, receiver_donations = donations) |> select(-generalelection), join_by(year, receiver_FIPS))
+  left_join(donation_data |> rename(receiver_FIPS = fips, receiver_donations = donations), join_by(year, receiver_FIPS))
 
 irs_data = irs_data |>
   mutate(scaled_turnout = sender_gop*sender_turnout - receiver_gop*receiver_turnout,
-         scaled_donations = sender_gop*sender_donations/sender_pop - receiver_gop*receiver_donations/receiver_pop,
-         partisan_gap = sender_gop - receiver_gop)
+         scaled_donations = sender_gop*log(1+sender_donations/sender_pop) - receiver_gop*log(1+receiver_donations/receiver_pop),
+         partisan_gap = sender_gop - receiver_gop,
+         generalelection = if_else(year %% 4 %in% c(0,3), T, F))
 ```
 
 ```{r}
-model = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(1+dist),3) + as.factor(uic_receiver)*as.factor(uic_sender) + as.factor(year)*scaled_turnout + as.factor(year)*scaled_donations + partisan_gap, data = irs_data)
+library(stargazer)
+model1 = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(dist),3)  + as.factor(year), data = irs_data)
+#+ as.factor(year)*scaled_turnout + as.factor(year)*scaled_donations + as.factor(uic_receiver)*as.factor(uic_sender)
+
+# model = lm(log(people_flow) ~ log(sender_pop) + log(receiver_pop) + poly(log(1+dist),4) + instate, data = irs_data)
+summary(model1)
+stargazer(model2,
+        omit = "factor\\(year\\)",  # or just "year" depending on how your model encodes year
+        add.lines = list(c("Year FE", "Yes", "Yes")))
+```
+
+```{r}
+library(stargazer)
+model2 = lm(log(people_flow) ~ log(sender_density)*log(receiver_density) + log(sender_pop) + log(receiver_pop) + instate*poly(log(dist),3)  + as.factor(year) + partisan_gap + scaled_turnout + scaled_donations, data = irs_data)
+
+#+ as.factor(year)*scaled_turnout + as.factor(year)*scaled_donations + as.factor(uic_receiver)*as.factor(uic_sender)
+
+# model = lm(log(people_flow) ~ log(sender_pop) + log(receiver_pop) + poly(log(1+dist),4) + instate, data = irs_data)
+summary(model2)
+stargazer(model2,
+        omit = "factor\\(year\\)",  # or just "year" depending on how your model encodes year
+        add.lines = list(c("Year FE", "Yes", "Yes")))
 
 
-model = lm(log(people_flow) ~ log(sender_pop) + log(receiver_pop) + poly(log(1+dist),4) + instate, data = irs_data )
+stargazer(model1, model2,
+        omit = "factor\\(year\\)",  # or just "year" depending on how your model encodes year
+        add.lines = list(c("Year Fixed Effects", "Yes", "Yes")))
+```
 
-summary(model)
-
+```{r}
 irs_data$fitted = exp(predict(model, irs_data))
 
 irs_data <- irs_data |>
@@ -98,6 +141,12 @@ irs_data <- irs_data |>
 
 #run regression with political salience measure and urban influence codes
 #experiment with raw voter turnout 
+```
+
+```{r}
+# model = nls(people_flow ~ b*(sender_pop/1000)^e1 *(receiver_pop/1000)^e2 /(1+dist)^a, data = irs_data |> filter(!is.na(sender_pop), !is.na(receiver_pop), !is.na(dist), receiver_FIPS %in% region_fips, !(sender_FIPS %in% region_fips)) |> mutate(gross = people_counterflow + people_flow), start = list(a = 1.5, b = 1000, e1=1, e2=1))
+# 
+# summary(model)
 ```
 
 ```{r}
@@ -113,4 +162,3 @@ irs_data <- irs_data |>
 
 #Not sure if we use a train-test split here given that our goal is inference rather than prediction
 ```
-

@@ -1,0 +1,202 @@
+---
+title: "Markov"
+format: pdf
+editor: source
+---
+
+```{r}
+#forecasting forward populations with Markov model
+
+#construct transition matrix
+
+#using 2012-2021 because last year uses planning regions
+#make sure non-county military fips codes are omitted
+
+library(sf)
+county_pops = st_read("county_map/county_map.shp") |>
+  st_drop_geometry()
+
+pops21 = county_pops |>
+  select(fips, pop21)
+
+#use totals to get proptm
+# outmovers = read_csv("Data/irs_data_totals_2012-2022.csv") |>
+#   filter(year != 2022) |>
+#   group_by(receiver_FIPS) |>
+#   summarize(outmovers = mean(US_migration_people_counterflow)) |>
+#   rename(fips = receiver_FIPS)
+# 
+# proptm = left_join(avg_pops, outmovers, by = "fips") |>
+#   mutate(proptm = outmovers/avg_pop)
+# 
+# proptm_imputation = median(proptm$proptm, na.rm = T)
+# 
+# proptm = proptm |>
+#   mutate(proptm = replace_na(proptm, proptm_imputation))
+```
+
+```{r}
+# #using ACS data
+# 
+# avg_pops_acs = county_pops |>
+#   select(-pop21, -pop22, -pop23, -pop10, -pop20) |> #use pops from first year of migration data
+#   mutate(avg_pop = rowMeans(across(contains("pop1")), na.rm = TRUE),
+#          avg_pop = if_else(is.na(avg_pop), pop, avg_pop)) |> #fixes Valdez-Cordova
+#   select(fips, avg_pop)
+# 
+# acs_data = read.csv(paste0(datapath, "acs_migration_data_2011-2020.csv"))
+# 
+# acs_data <- acs_data |>
+#   mutate(receiver_FIPS = sprintf("%05s", receiver_FIPS))
+# 
+# 
+# migration_data = acs_data |>
+#   filter(!is.na(as.numeric(sender_FIPS))) |>
+#   select(sender_FIPS, receiver_FIPS, flow)
+# 
+# outmovers = migration_data |>
+#   group_by(sender_FIPS) |>
+#   summarize(outmovers = sum(flow)) |>
+#   ungroup() |>
+#   left_join(avg_pops_acs |> rename(sender_FIPS = fips)) |>
+#   mutate(proptm = outmovers/(avg_pop*10)) |>
+#   filter(!is.na(proptm)) |> #drops PR and Valdez-Cordova
+#   mutate(receiver_FIPS = sender_FIPS) |>
+#   mutate(flow = avg_pop) |>
+#   select(sender_FIPS, receiver_FIPS, flow, proptm) 
+# 
+# #NOT DONE
+# #THIS IS KIND OF A MESS BECAUSE OF THE HIGH PROPTMs
+# 
+# 
+# migration_data <- migration_data |>
+#   group_by(sender_FIPS, receiver_FIPS) |>
+#   summarize(flow = sum(flow)/10) |>
+#   ungroup() |>
+#   left_join(outmovers, by = "sender_FIPS") |>
+#   mutate(flow = )
+#   group_by(sender_FIPS) |>
+#   mutate(transition_probability = flow/sum(flow)) |> 
+#   ungroup()
+# 
+# immigration = acs_data |>
+#   filter(is.na(as.numeric(sender_FIPS))) |>
+#   group_by(receiver_FIPS) |>
+#   summarize(immigration = sum(flow)) |>
+#   ungroup() |>
+#   rename(fips = receiver_FIPS) |>
+#   left_join(avg_pops, by = "fips") |>
+#   filter(!is.na(avg_pop)) |> #just removes the counties with fips code changes
+#   mutate(migration = 1+(immigration/avg_pop))
+```
+
+
+```{r}
+#using IRS data
+
+avg_pops_irs = county_pops |>
+  select(-pop21, -pop22, -pop23, -pop, -pop10) |> #use pops from first year of migration data, not using 21-22 because of planning regions
+  mutate(avg_pop = rowMeans(across(contains("pop")), na.rm = TRUE)) |>
+  select(fips, avg_pop)
+
+migration_data = read_csv("Data/irs_migration_data_2012-2022.csv") |>
+  filter(!is.na(dist), year != 2022) |>
+  select(sender_FIPS, receiver_FIPS, people_flow) |>
+  group_by(sender_FIPS, receiver_FIPS) |>
+  summarize(flow = sum(people_flow)) |>
+  ungroup() |>
+  group_by(sender_FIPS) |>
+  mutate(transition_probability = flow/sum(flow), 
+         transition_probability = if_else(flow == 0, 1, transition_probability)) |> #not very good code but Kalawao-Kalawao is only included because it is a self-loop
+  ungroup()
+# I can solve this without using a sparse matrix, probably pretty quickly, but the issue is sink nodes
+#maybe doesn't matter for short-term, especially if they have no inflow
+
+# immigration = read_csv("Data/irs_data_totals_2012-2022.csv") |>
+#   filter(year != 2022) |>
+#   group_by(receiver_FIPS) |>
+#   summarize(immigration = mean(Foreign_people_flow, na.rm = T),
+#             immigration = replace_na(immigration, 0),
+#             outmigration = mean(Foreign_people_counterflow, na.rm = T),
+#             outmigration = replace_na(outmigration, 0)) |>
+#   ungroup() |>
+#   rename(fips = receiver_FIPS) |>
+#   left_join(avg_pops_irs, by = "fips") |>
+#   filter(!is.na(avg_pop)) |> #just removes the counties with fips code changes
+#   mutate(migration = 1+(immigration-outmigration)/avg_pop)
+# #these data show net out-migration which is very odd
+# 
+# summary(immigration)
+
+#missing population data for 4 fips codes (due to reclassification I think)
+#just dropping them for now
+
+migration_data |>
+  filter(sender_FIPS == "06037") |>
+  arrange(desc(transition_probability))
+```
+
+```{r}
+t=9
+
+popst = county_pops |>
+  mutate(pop21 = if_else(is.na(pop21), pop20, pop21)) |> #for CT
+  select(fips, pop21) |> #2020 pops
+  rename(sender_FIPS = fips,
+         pop = pop21)
+
+for(i in 1:t){
+popst = migration_data |>
+    left_join(popst, by = "sender_FIPS") |>
+  filter(!is.na(pop)) |>
+    mutate(movers = pop*transition_probability) |>
+    group_by(receiver_FIPS) |>
+    summarize(new_pop = sum(movers)) |>
+    ungroup() |>
+    rename(sender_FIPS = receiver_FIPS,
+           pop = new_pop)
+  }
+
+simulation_2030 = popst |>
+  rename(pop30 = pop,
+         fips = sender_FIPS)
+  
+simulation_2030 = county_pops |>  
+  left_join(simulation_2030, by = "fips") |>
+  mutate(pop21 = if_else(is.na(pop21), pop, pop21), #for CT
+    pct_change = pop30/pop21 - 1,
+         log_change = log(1+pct_change))
+
+# sum(simulation_2030$pop21)
+# sum(simulation_2030$pop30)
+#within 3000, maybe rounding issues
+
+sinks = migration_data |>
+  filter(transition_probability == 1) |>
+  rename(fips = receiver_FIPS) |>
+  left_join(simulation_2030 |> select(pop30, pct_change, fips))
+
+```
+
+```{r}
+
+map(
+  data = simulation_2030 |> rename(Value = log_change) |> select(-pop, -name),
+  county_map = county_map,
+  state_map = state_map,
+  title = "Log Percent Population Change from 2021 to 2030",
+  subtitle = "Simulated Using a Markov Model",
+  years = 2012:2021,
+  bubbles = F,
+  graphicspath = graphicspath,
+  low_color = "#CC5500",
+  high_color = "forestgreen",
+  continental = F,
+  cutoff_column = "pop",
+  inset_cutoff = 50000,
+  center = 0,
+  breaks = c(0.05,0.1,0.15,0.2)
+  #merge_MSAs = T
+)
+```
+
