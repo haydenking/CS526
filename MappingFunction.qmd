@@ -267,14 +267,14 @@ handle_chloropleth <- function(map, state_map, breaks, labels_manual, low_color,
     }
     breaks <- unique(breaks)
     breaks <- sort(breaks)
-    if (is.na(labels_manual[1])) { #I think this code doesn't work well for two-sided breaks iykwim
+    if (is.na(labels_manual[1])) { #I think this code doesn't work well for two-sided breaks
         formatted_labels <- paste0(dollar,
                                    label_comma()(head(breaks, -1)),
                                    " to ",
                                    dollar,
                                    label_comma()(breaks[-1]),
                                    unit)
-        if (unit != "%") { #if we have dollar unit this probably doesn't work but I'll deal with that when it comes up
+        if (unit != "%") { #if we have dollar unit this probably doesn't work but I'll deal with that if it comes up
           formatted_labels[length(formatted_labels)] <- paste0(">",str_remove(formatted_labels[length(formatted_labels)], " to .*"), unit)
 
           formatted_labels[1] <- paste0("<",str_remove(formatted_labels[1], ".* to "))
@@ -490,7 +490,7 @@ if(caption_manual == ""){
       map <- map %>%
         rowwise() %>%
         mutate(
-          avg_pop = mean(c_across(all_of(pop_cols)), na.rm = T), #I need to get 1990-2010 populations or else this is quite bad
+          avg_pop = mean(c_across(all_of(pop_cols)), na.rm = T),
           avg_pop = ifelse(is.na(avg_pop) | avg_pop == 0, pop, avg_pop), # Default to "pop" if missing
           pop = avg_pop #if pop is the inset cutoff this matters
         ) %>%
@@ -568,23 +568,19 @@ if(caption_manual == ""){
 ```
 
 ##helper functions
-
 ```{r}
 compute_breaks <- function(values) {
   max_value <- max(values, na.rm = TRUE)
   min_value <- max(min(values , na.rm = TRUE),1)
   
-  # Get the powers of 10 between min_value and max_value
   powers_of_10 <- 10^(ceiling(log10(min_value)):floor(log10(max_value)))
   
-  # Check if max_value exceeds the highest power of 10 by more than 5x
+  #check if max_value exceeds the highest power of 10 by more than 5x
   if (max_value > 5 * max(powers_of_10)) {
     powers_of_10 <- c(powers_of_10, 5 * max(powers_of_10))
   } else if(max_value > 2 * max(powers_of_10)){
     powers_of_10 <- c(powers_of_10, 2 * max(powers_of_10))
   }
-  
-  # Combine the values and return unique, sorted breaks
   breaks <- sort(unique(powers_of_10))
   if (length(breaks) > 4) {
     breaks <- tail(breaks, 4)
@@ -595,7 +591,7 @@ round_to_sigfigs <- function(value, sigfigs, method = c("floor", "ceiling")) {
   method <- match.arg(method)
   if (value <= 0) return(0)
   
-  # Calculate the scale factor based on the significant figures
+  #calculate the scale factor based on the significant figures
   scale_factor <- 10^(floor(log10(abs(value))) - (sigfigs - 1))
   
   if (method == "floor") {
